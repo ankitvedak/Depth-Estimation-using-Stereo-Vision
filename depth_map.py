@@ -174,7 +174,7 @@ def calculate_error(depth_map):
 
 	return error
 
-data_dir = "/home/BOSDYN/bvalentino/Documents/2011_09_26/"
+data_dir = "~/Downloads/2011_09_26/"
 raw_images_path = "/2011_09_26_drive_0001_extract/"
 depth_images_path = "/2011_09_26_drive_0001_sync/proj_depth/groundtruth/"
 config_file = "calib_cam_to_cam.txt"
@@ -187,7 +187,7 @@ if data_dir + config_file:
 
 count = 0
 for file_path in glob.glob(data_dir + depth_images_path + "image_02/*"):
-	if count >= 1:
+	if count >= 100:
 		break 
 
 	filename = os.path.basename(file_path)
