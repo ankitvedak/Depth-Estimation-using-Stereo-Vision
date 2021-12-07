@@ -67,7 +67,7 @@ def load_camera_calibrations(calibration_file_path):
 	c1_t_c2 = world_t_c2 @ np.linalg.inv(world_t_c1) 
 	#print("c1_t_c2\n", c1_t_c2)
 
-	r =    c1_t_c2[0:3, 0:3]
+	r = c1_t_c2[0:3, 0:3]
 	t = c1_t_c2[0:3, 3]
 	#print("R\n", r)
 	#print("T\n", t)
@@ -94,6 +94,10 @@ def getDisparity_MeanShift(left_image, right_image):
 	segmented_right, right_clusters = segment_image(right_image)
 
 	label_to_dist = {}
+	# for each cluster in the left image
+	# find the points in the right image that have the same label
+	# then find the centriod of that region and get the x disparity
+	# which we will apply to all points with that label 
 	for n in range(0,len(left_clusters)):
 		dist = 0  
 		label = sgemented_left[left_clusters[n][1]][left_clusters[n][0]]
@@ -105,6 +109,7 @@ def getDisparity_MeanShift(left_image, right_image):
 					break
 		label_to_dist[label] = dist 
 
+	# create the disparity image 
 	disp = np.zeros(1242, 375)
 	for j in range(len(disp)):
 		for i in range(len(disp[0])):
