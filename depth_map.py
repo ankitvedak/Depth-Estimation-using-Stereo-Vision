@@ -1,11 +1,13 @@
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import os
 import glob
 import PIL.Image as pil
 from sklearn.cluster import MeanShift, estimate_bandwidth
+from skimage.measure import regionprops, label
+from skimage.color import label2rgb
+from skimage.morphology import closing
 
 def rectify_images(imgL, imgR, I, E):
 	sz = (len(imgL[0]), len(imgL))	
@@ -67,7 +69,7 @@ def load_camera_calibrations(calibration_file_path):
 	c1_t_c2 = world_t_c2 @ np.linalg.inv(world_t_c1) 
 	#print("c1_t_c2\n", c1_t_c2)
 
-	r = c1_t_c2[0:3, 0:3]
+	r =    c1_t_c2[0:3, 0:3]
 	t = c1_t_c2[0:3, 3]
 	#print("R\n", r)
 	#print("T\n", t)
@@ -93,27 +95,42 @@ def getDisparity_MeanShift(left_image, right_image):
 	sgemented_left, left_clusters = segment_image(left_image)
 	segmented_right, right_clusters = segment_image(right_image)
 
+	plt.figure(1)
+	plt.imshow(sgemented_left)
+	plt.figure(2)
+	plt.imshow(segmented_right)
+	plt.show()
+
+	left_clusters = np.floor(left_clusters).astype(int)
+	right_clusters = np.floor(right_clusters).astype(int)
 	label_to_dist = {}
-	# for each cluster in the left image
-	# find the points in the right image that have the same label
-	# then find the centriod of that region and get the x disparity
-	# which we will apply to all points with that label 
+	print(len(left_clusters), len(right_clusters))
 	for n in range(0,len(left_clusters)):
 		dist = 0  
-		label = sgemented_left[left_clusters[n][1]][left_clusters[n][0]]
-		i,j = np.where(segmented_right == label)
-		if len(i) != 0 and len(j) != 0:
+		#print(left_clusters[n])
+		i_l  = left_clusters[n][0]
+		j_l = left_clusters[n][1]
+		label = sgemented_left[i_l][j_l]
+		#print(label)
+		indices = np.where(np.all(segmented_right == label, axis=-1))
+		#print(indices)
+		if len(indices) != 0:
 			for m in range(0, len(right_clusters)):
-				if right_clusters[0] in i and right_clusters[1] in j:
-					dist = left_clusters[n][0] - right_clusters[m][0]
+				if right_clusters[0] in indices[0] and indices[1] in coords[1]:
+					dist = right_clusters[m][0] -left_clusters[n][0] 
 					break
-		label_to_dist[label] = dist 
+		label_to_dist[' '.join(map(str, label))] = dist 
 
-	# create the disparity image 
-	disp = np.zeros(1242, 375)
+	print(len(label_to_dist))
+	disp = np.zeros((375,1242))
 	for j in range(len(disp)):
 		for i in range(len(disp[0])):
-			disp = depth_to_label[left_image[j][i]]
+			label = sgemented_left[j][i]
+			dist = label_to_dist.get(' '.join(map(str, label)))
+			if dist:
+				disp[j][i] = dist
+			else:
+				disp[j][i] = 0
 
 	return disp.astype(np.float32)
 
@@ -128,9 +145,9 @@ def segment_image(image):
 	labeled = ms.labels_
 
 	segments = np.unique(labeled)
-	print('Number of segments: ', segments.shape[0])
-	print("cluster centroids", ms.cluster_centers_)
-	print("length of centroid matrix", len(ms.cluster_centers_))
+	#print('Number of segments: ', segments.shape[0])
+	#print("cluster centroids", ms.cluster_centers_)
+	#print("length of centroid matrix", len(ms.cluster_centers_))
 
 	# get the average color of each segment
 	total = np.zeros((segments.shape[0], 3), dtype=float)
@@ -144,8 +161,19 @@ def segment_image(image):
 	# cast the labeled image into the corresponding average color
 	res = avg[labeled]
 	result = res.reshape((image.shape))
-	return result, ms.cluster_centers_
 
+	labeled_image, centroids = find_centriods(result)
+
+	return labeled_image, centroids
+
+def find_centriods(segmented_image):
+	gray = cv2.cvtColor(segmented_image, cv2.COLOR_BGR2GRAY)
+	labeled_image = label(gray)
+	image_label_overlay = label2rgb(labeled_image, image=gray, bg_label=0)
+	regions = regionprops(labeled_image)
+
+	filtered_regions = filter(lambda region: region.area > 100 , regions)
+	return image_label_overlay, list(map(lambda region: region.centroid, filtered_regions))
 
 def calculate_error(depth_map):
 	error = 0
@@ -169,17 +197,9 @@ def calculate_error(depth_map):
 
 		print("error:", error, "mean", np.mean(diff[diff > 0]), " ", np.std(diff[diff>0]))
 
-		#plt.figure(1)
-		#plt.imshow(ground_truth)
-		#plt.figure(2)
-		#plt.imshow(computed)
-		#plt.figure(3)
-		#plt.imshow(diff.astype('uint8')/np.amax(diff))
-		#plt.show()
-
 	return error
 
-data_dir = "~/Downloads/2011_09_26/"
+data_dir = "/home/BOSDYN/bvalentino/Documents/2011_09_26/"
 raw_images_path = "/2011_09_26_drive_0001_extract/"
 depth_images_path = "/2011_09_26_drive_0001_sync/proj_depth/groundtruth/"
 config_file = "calib_cam_to_cam.txt"
@@ -192,7 +212,7 @@ if data_dir + config_file:
 
 count = 0
 for file_path in glob.glob(data_dir + depth_images_path + "image_02/*"):
-	if count >= 100:
+	if count >= 1:
 		break 
 
 	filename = os.path.basename(file_path)
@@ -203,6 +223,13 @@ for file_path in glob.glob(data_dir + depth_images_path + "image_02/*"):
 
 	disparity_SGBM = getDisparity_SGBM(img_left_rectified, img_right_rectified)
 	disparity_MeanShift = getDisparity_MeanShift(img_left_rectified, img_right_rectified)
+
+	plt.figure(1)
+	plt.imshow(disparity_SGBM)
+	plt.figure(2)
+	plt.imshow(disparity_MeanShift)
+	plt.show()
+
 
 	depth_sgbm = cv2.reprojectImageTo3D(disparity_SGBM, Q, handleMissingValues=True)
 	depth_mean = cv2.reprojectImageTo3D(disparity_MeanShift, Q, handleMissingValues=True)
