@@ -2,7 +2,7 @@
 
 Uses the following data:
 * raw non rectified iamges for city images [Found here](https://s3.eu-central-1.amazonaws.com/avg-kitti/raw_data/2011_09_26_drive_0001/2011_09_26_drive_0001_extract.zip)
-* raw non rectified images for residential images [Found here](https://s3.eu-central-1.amazonaws.com/avg-kitti/raw_data/2011_09_26_drive_0001/2011_09_26_drive_0046_extract.zip
+* raw non rectified images for residential images [Found here](https://s3.eu-central-1.amazonaws.com/avg-kitti/raw_data/2011_09_26_drive_0001/2011_09_26_drive_0046_extract.zip)
 * ground truth depth data of lidar projected into carema frame [Found Here](https://s3.eu-central-1.amazonaws.com/avg-kitti/data_depth_velodyne.zip)
 * camera calibriation files [Found Here](https://s3.eu-central-1.amazonaws.com/avg-kitti/raw_data/2011_09_26_calib.zip)
 
