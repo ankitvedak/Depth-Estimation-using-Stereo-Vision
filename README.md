@@ -11,4 +11,5 @@ The python script will take each raw image pair and rectify it, then calculate a
 * MeanShift Segmentation - Followed by cluster matching 
 
 The depth value calculated for each image pair is the compared against the lidar data projected into the camera frame to get an raw error value. 
-https://st1.zoom.us/web_client/w4c33rz/html/externalLinkPage.html?ref=https://drive.google.com/drive/folders/1FZlEXvrJm2zbLAPzx3Q94SOE2hGN0cmK?usp=sharing
+
+https://drive.google.com/drive/folders/1FZlEXvrJm2zbLAPzx3Q94SOE2hGN0cmK?usp=sharing
