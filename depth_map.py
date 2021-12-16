@@ -5,9 +5,12 @@ import os
 import glob
 import PIL.Image as pil
 from sklearn.cluster import MeanShift, estimate_bandwidth
-from skimage.measure import regionprops, label
+
+import matplotlib.patches as mpatches
+from skimage.measure import label, regionprops
+from skimage.morphology import closing, square
 from skimage.color import label2rgb
-from skimage.morphology import closing
+from skimage.feature import match_template
 
 def rectify_images(imgL, imgR, I, E):
 	sz = (len(imgL[0]), len(imgL))	
@@ -23,8 +26,8 @@ def rectify_images(imgL, imgR, I, E):
 	#print("P1:", P1, "\nP2",P2, "\nR1", R1, "\nR2", R2, "\nQ", Q)
 
 	# apply rectification
-	map11, map12 = cv2.initUndistortRectifyMap(I['M1'], I['D1'], R1, P1,  (1242, 375), cv2.CV_32FC1);
-	map21, map22 = cv2.initUndistortRectifyMap(I['M2'], I['D2'], R2, P2,  (1242, 375), cv2.CV_32FC1);
+	map11, map12 = cv2.initUndistortRectifyMap(I['M1'], I['D1'], R1, P1,  (1242, 375), cv2.CV_32FC1)
+	map21, map22 = cv2.initUndistortRectifyMap(I['M2'], I['D2'], R2, P2,  (1242, 375), cv2.CV_32FC1)
 
 	imgL_r = cv2.remap(imgL, map11, map12, cv2.INTER_LINEAR);
 	imgR_r = cv2.remap(imgR, map21, map22, cv2.INTER_LINEAR);
@@ -92,6 +95,10 @@ def getDisparity_SGBM(left_image, right_image):
 	return matcher.compute(left_image, right_image)
 
 def getDisparity_MeanShift(left_image, right_image):
+	#convert to gray because scikit-image hates color 
+	left_gray = cv2.cvtColor(left_image, cv2.COLOR_BGR2GRAY)
+	right_gray = cv2.cvtColor(right_image, cv2.COLOR_BGR2GRAY)
+
 	sgemented_left, left_clusters = segment_image(left_image)
 	segmented_right, right_clusters = segment_image(right_image)
 
@@ -101,37 +108,21 @@ def getDisparity_MeanShift(left_image, right_image):
 	plt.imshow(segmented_right)
 	plt.show()
 
-	left_clusters = np.floor(left_clusters).astype(int)
-	right_clusters = np.floor(right_clusters).astype(int)
 	label_to_dist = {}
-	print(len(left_clusters), len(right_clusters))
+	#print(left_clusters, right_clusters)
+	disp = np.zeros((375,1242))
+	left_clusters = sorted(left_clusters,  key=lambda x:x.area, reverse=True)
 	for n in range(0,len(left_clusters)):
 		dist = 0  
-		#print(left_clusters[n])
-		i_l  = left_clusters[n][0]
-		j_l = left_clusters[n][1]
-		label = sgemented_left[i_l][j_l]
-		#print(label)
-		indices = np.where(np.all(segmented_right == label, axis=-1))
-		#print(indices)
-		if len(indices) != 0:
-			for m in range(0, len(right_clusters)):
-				if right_clusters[0] in indices[0] and indices[1] in coords[1]:
-					dist = right_clusters[m][0] -left_clusters[n][0] 
-					break
-		label_to_dist[' '.join(map(str, label))] = dist 
+		label = left_clusters[n].label
+		result = match_template(right_gray, left_clusters[n].intensity_image)
+		ij = np.unravel_index(np.argmax(result), result.shape)
+		x, y = ij[::-1]
+		if x and y: 
+			dist = x -left_clusters[n].centroid[0] 
+		disp[left_clusters[n].slice] = dist 
 
-	print(len(label_to_dist))
-	disp = np.zeros((375,1242))
-	for j in range(len(disp)):
-		for i in range(len(disp[0])):
-			label = sgemented_left[j][i]
-			dist = label_to_dist.get(' '.join(map(str, label)))
-			if dist:
-				disp[j][i] = dist
-			else:
-				disp[j][i] = 0
-
+	#print(len(label_to_dist))
 	return disp.astype(np.float32)
 
 
@@ -152,8 +143,9 @@ def segment_image(image):
 	# get the average color of each segment
 	total = np.zeros((segments.shape[0], 3), dtype=float)
 	count = np.zeros(total.shape, dtype=float)
+	#print(np.shape(labeled), np.shape(flat_image), np.shape(total))
 	for i, label in enumerate(labeled):
-	    total[label] = total[label] + flat_image[i]
+	    total[label] += flat_image[i]
 	    count[label] += 1
 	avg = total/count
 	avg = np.uint8(avg)
@@ -163,28 +155,34 @@ def segment_image(image):
 	result = res.reshape((image.shape))
 
 	labeled_image, centroids = find_centriods(result)
-
 	return labeled_image, centroids
 
 def find_centriods(segmented_image):
 	gray = cv2.cvtColor(segmented_image, cv2.COLOR_BGR2GRAY)
+	gray = closing(gray)
 	labeled_image = label(gray)
 	image_label_overlay = label2rgb(labeled_image, image=gray, bg_label=0)
-	regions = regionprops(labeled_image)
+	regions = regionprops(labeled_image, gray)
 
-	filtered_regions = filter(lambda region: region.area > 100 , regions)
-	return image_label_overlay, list(map(lambda region: region.centroid, filtered_regions))
+	filtered_regions = list(filter(lambda region: region.area > 10, regions))
 
-def calculate_error(depth_map):
+	return image_label_overlay, filtered_regions
+
+def calculate_error(depth_map, image_path):
 	error = 0
 	for filename in depth_map.keys(): 
-		file_path = data_dir + depth_images_path + "/image_02/" + filename
+		file_path = image_path + filename
 
 		depth_gt = pil.open(file_path)
 		depth_gt = np.array(depth_gt).astype(np.float32) / 256
 
+		plt.figure(1)
+		plt.imshow(depth_gt)
+		plt.show()
+
+
 		ground_truth = depth_gt *  0.54 #Scale the results by the baseline 
-		computed = np.where(depth_map[filename][:, :, 2]<1000, depth_map[filename][:, :, 2], 0)
+		computed = np.where(depth_map[filename][:, :, 2]<10000, depth_map[filename][:, :, 2], 0)
 		computed = computed 
 
 		diff = np.zeros((len(ground_truth)-1, len(ground_truth[0])-1))
@@ -195,9 +193,9 @@ def calculate_error(depth_map):
 					diff[j][i] = int(spot_e)
 					error += spot_e
 
-		print("error:", error, "mean", np.mean(diff[diff > 0]), " ", np.std(diff[diff>0]))
+		#print("error:", error, "mean", np.mean(diff[diff > 0]), " ", np.std(diff[diff>0]))
 
-	return error
+	return error, np.mean(diff[diff>0]), np.std(diff[diff>0]) 
 
 data_dir = "/home/BOSDYN/bvalentino/Documents/2011_09_26/"
 raw_images_path = "/2011_09_26_drive_0001_extract/"
@@ -211,11 +209,58 @@ if data_dir + config_file:
 	I,E = load_camera_calibrations(data_dir + config_file)
 
 count = 0
+
+print("Filename", "SGBM Error", "Mean Shift Error\n")
+
+for file_path in glob.glob(data_dir + "2011_09_26_drive_0046_sync/proj_depth/groundtruth/image_02/*"):
+	if count >= 1:
+		break 
+
+	filename = os.path.basename(file_path)
+	print(filename)
+	img_left_raw = cv2.imread(data_dir + "2011_09_26_drive_0046_extract/image_02/data/" + filename)
+	img_right_raw = cv2.imread(data_dir + "2011_09_26_drive_0046_extract/image_03/data/" + filename)
+
+	img_left_rectified, img_right_rectified, Q = rectify_images(img_left_raw, img_right_raw, I, E);
+
+	disparity_SGBM = getDisparity_SGBM(img_left_rectified, img_right_rectified)
+	disparity_MeanShift = getDisparity_MeanShift(img_left_rectified, img_right_rectified)
+
+	depth_sgbm = cv2.reprojectImageTo3D(disparity_SGBM, Q, handleMissingValues=True)
+	depth_mean = cv2.reprojectImageTo3D(disparity_MeanShift, Q, handleMissingValues=True)
+
+	plt.figure(1)
+	plt.imshow(disparity_SGBM)
+	plt.figure(2)
+	plt.imshow(disparity_MeanShift)
+	plt.figure(3)
+	plt.imshow(depth_sgbm)
+	plt.figure(4)
+	plt.imshow(depth_mean)
+	plt.figure(5)
+	plt.imshow(img_left_rectified)
+	plt.figure(6)
+	plt.imshow(img_right_rectified)
+	plt.show()
+
+
+	depth_map_smgb[filename]  = depth_sgbm
+	depth_map_mean[filename] = depth_mean
+
+	count += 1
+
+	sgbm_error, mean, sd = calculate_error(depth_map_smgb,  data_dir + "2011_09_26_drive_0046_sync/proj_depth/groundtruth/image_02/")
+	mean_error, mean, sd = calculate_error(depth_map_mean, data_dir + "2011_09_26_drive_0046_sync/proj_depth/groundtruth/image_02/")
+
+	print(filename, ",",sgbm_error,",", mean_error,"\n")
+
+count = 0
 for file_path in glob.glob(data_dir + depth_images_path + "image_02/*"):
 	if count >= 1:
 		break 
 
 	filename = os.path.basename(file_path)
+	print(filename)
 	img_left_raw = cv2.imread(data_dir + "2011_09_26_drive_0001_extract/image_02/data/" + filename)
 	img_right_raw = cv2.imread(data_dir + "2011_09_26_drive_0001_extract/image_03/data/" + filename)
 
@@ -224,23 +269,32 @@ for file_path in glob.glob(data_dir + depth_images_path + "image_02/*"):
 	disparity_SGBM = getDisparity_SGBM(img_left_rectified, img_right_rectified)
 	disparity_MeanShift = getDisparity_MeanShift(img_left_rectified, img_right_rectified)
 
+	depth_sgbm = cv2.reprojectImageTo3D(disparity_SGBM, Q, handleMissingValues=True)
+	depth_mean = cv2.reprojectImageTo3D(disparity_MeanShift, Q, handleMissingValues=True)
+
 	plt.figure(1)
 	plt.imshow(disparity_SGBM)
 	plt.figure(2)
 	plt.imshow(disparity_MeanShift)
+	plt.figure(3)
+	plt.imshow(depth_sgbm)
+	plt.figure(4)
+	plt.imshow(depth_mean)
+	plt.figure(5)
+	plt.imshow(img_left_rectified)
+	plt.figure(6)
+	plt.imshow(img_right_rectified)
 	plt.show()
 
 
-	depth_sgbm = cv2.reprojectImageTo3D(disparity_SGBM, Q, handleMissingValues=True)
-	depth_mean = cv2.reprojectImageTo3D(disparity_MeanShift, Q, handleMissingValues=True)
 	depth_map_smgb[filename]  = depth_sgbm
 	depth_map_mean[filename] = depth_mean
 
 	count += 1
 
-sgbm_error = calculate_error(depth_map_smgb)
-mean_error = calculate_error(depth_map_mean)
+	sgbm_error, mean, sd = calculate_error(depth_map_smgb, data_dir + depth_images_path + "image_02/")
+	mean_error, mean, sd = calculate_error(depth_map_mean, data_dir + depth_images_path + "image_02/")
 
-print("SGBM Error:", sgbm_error, "Mean Shift Error:", mean_error)
+	print(filename, ",",sgbm_error,",", mean_error,"\n")
 
 
